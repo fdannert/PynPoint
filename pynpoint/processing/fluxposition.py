@@ -499,6 +499,12 @@ class FalsePositiveModule(ProcessingModule):
     Optionally, the SNR can be optimized with the aperture position as free parameter.
     """
 
+    #----------ToDos--------------------ToDos--------------------ToDos----------
+    # - Correct the optimize feature
+    # - Check Module with Test case
+    
+    #---------------------------------------------------------------------------
+
     __author__ = 'Tomas Stolker'
 
     @typechecked
@@ -578,6 +584,9 @@ class FalsePositiveModule(ProcessingModule):
             self.m_reference_in_port = self.add_input_port(image_in_tag)
         else:
             self.m_reference_in_port = self.add_input_port(reference_in_tag)
+            
+        if aperture_angles == None:
+            aperture_angles = [0., 360.]
 
         self.m_image_in_port = self.add_input_port(image_in_tag)
         self.m_snr_out_port = self.add_output_port(snr_out_tag)
@@ -620,6 +629,7 @@ class FalsePositiveModule(ProcessingModule):
                 _, _, snr, _ = false_alarm(image=image,
                                            x_pos=pos_x,
                                            y_pos=pos_y,
+                                           aperture_angles=self.m_aperture_angles,
                                            size=self.m_aperture,
                                            ignore=self.m_ignore)
 
@@ -657,6 +667,7 @@ class FalsePositiveModule(ProcessingModule):
                 _, _, snr, fpf = false_alarm(image=image,
                                              x_pos=self.m_position[0],
                                              y_pos=self.m_position[1],
+                                             aperture_angles=self.m_aperture_angles,
                                              size=self.m_aperture,
                                              ignore=self.m_ignore)
 

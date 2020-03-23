@@ -24,6 +24,7 @@ from pynpoint.util.residuals import combine_residuals
 def false_alarm(image: np.ndarray,
                 x_pos: float,
                 y_pos: float,
+                aperture_angles: Tuple[float, float],
                 size: float,
                 ignore: bool) -> Tuple[float, float, float, float]:
     """
@@ -40,73 +41,100 @@ def false_alarm(image: np.ndarray,
     Parameters
     ----------
     image : numpy.ndarray
-        The input image as a 2D numpy array. For example, this could be a residual frame returned by
-        a :class:`.PcaPsfSubtractionModule`.
+        The input image as a 2D numpy array. For example, this could be a residual frame returned 
+        by a :class:`.PcaPsfSubtractionModule`.
     x_pos : float
         The planet position (in pixels) along the horizontal axis. The pixel coordinates of the
         bottom-left corner of the image are (-0.5, -0.5).
     y_pos : float
         The planet position (pix) along the vertical axis. The pixel coordinates of the bottom-left
         corner of the image are (-0.5, -0.5).
+    aperture_angle : tuple(float,float)
+        ToDo!
     size : float
         The radius of the references apertures (in pixels). Usually, this values should be chosen
         close to lambda over D, that is, the typical FWHM of the PSF.
     ignore : bool
-        Whether or not to ignore the immediate neighboring apertures for the noise estimate. This is
-        desirable in case there are "self-subtraction wings" left and right of the planet which
-        would bias the estimation of the noise level at the separation of the planet if not ignored.
+        Whether or not to ignore the immediate neighboring apertures for the noise estimate. This 
+        is desirable in case there are "self-subtraction wings" left and right of the planet which
+        would bias the estimation of the noise level at the separation of the planet if not 
+        ignored.
 
     Returns
     -------
     signal_sum :
         The integrated (summed up) flux inside the signal aperture.
 
-        Please note that this is **not** identical to the numerator of the fraction defining the SNR
-        (which is given by the `signal_sum` minus the mean of the noise apertures).
+        Please note that this is **not** identical to the numerator of the fraction defining the 
+        SNR(which is given by the `signal_sum` minus the mean of the noise apertures).
     noise :
-        The denominator of the SNR, i.e., the standard deviation of the integrated flux of the noise
-        apertures, times a correction factor that accounts for small sample statistics.
+        The denominator of the SNR, i.e., the standard deviation of the integrated flux of the 
+        noise apertures, times a correction factor that accounts for small sample statistics.
     snr :
         The signal-to-noise ratio (SNR) as defined by Mawet et al. (2014) in eq. (8).
     fpf :
         The false positive fraction (FPF) as defined by Mawet et al. (2014) in eq. (10).
     """
+    
+    #----------ToDos--------------------ToDos--------------------ToDos----------
+    # - Reimplement ignore feature
+    # - Test if positions of reference apertures are correct. Best would be to export and plot all
+    #   all reference aperture positions
+    
+    
+    #---------------------------------------------------------------------------
+    
 
     # Compute the center of the current frame (with subpixel precision) and use it to compute the
-    # radius of the given position in polar coordinates (with the origin at the center of the frame)
+    # radius of the given position in polar coordinates (with the origin at the center of the 
+    # frame)
     center = center_subpixel(image)
     radius = math.sqrt((center[0] - y_pos)**2 + (center[1] - x_pos)**2)
 
     # Compute the number of apertures which we can place at the separation of  the given position
-    num_ap = int(math.pi * radius / size)
-
+    num_ap = int(((aperture_angles[1]-aperture_angles[0])*math.pi*radius/size/360.)-1)
+    
     # Compute the angles at which to place the reference apertures
-    ap_theta = np.linspace(0, 2 * math.pi, num_ap, endpoint=False)
+    ap_theta = np.linspace(aperture_angles[0]+180.*size/math.pi/radius, 
+                           aperture_angles[1]-180.*size/math.pi/radius,
+                           num_ap, endpoint=False)
 
     # If ignore is True, delete the apertures immediately right and left of the aperture placed on
     # the planet signal. These apertures often contain "self-subtraction wings", which means they
     # cannot be considered to originate from the same distribution. In accordance with section 3.2
     # of Mawet et al. (2014), such apertures are ignored to prevent bias.
     if ignore:
-        num_ap -= 2
-        ap_theta = np.delete(ap_theta, [1, np.size(ap_theta) - 1])
+        pass
+        #num_ap -= 2
+        #ap_theta = np.delete(ap_theta, [1, np.size(ap_theta) - 1])
 
     # If the number of apertures is 2 or less, we cannot compute the false positive fraction
     if num_ap < 3:
         raise ValueError(f'Number of apertures (num_ap={num_ap}) is too small to calculate the '
                          'false positive fraction.')
 
-    # Initialize a numpy array in which we will store the integrated flux of all reference apertures
+    # Initialize a numpy array in which we will store the integrated flux of all reference 
+    # apertures (number of apertures needs to include signal aperture)
+    num_ap += 1
     ap_phot = np.zeros(num_ap)
+    
+    # Create signal aperture as 0th component of the aperture photometry array
+    aperture = CircularAperture((x_pos, y_pos), size)
+    phot_table = aperture_photometry(image, aperture, method='exact')
+    ap_phot[0] = phot_table['aperture_sum']    
 
-    # Loop over all reference apertures and measure the integrated flux
+    # Loop over all reference apertures and measure the integrated flux in the reference apertures
     for i, theta in enumerate(ap_theta):
 
         # Compute the position of the current aperture in polar coordinates and convert to Cartesian
-        x_tmp = center[1] + (x_pos - center[1]) * math.cos(theta) - \
-                            (y_pos - center[0]) * math.sin(theta)
-        y_tmp = center[0] + (x_pos - center[1]) * math.sin(theta) + \
-                            (y_pos - center[0]) * math.cos(theta)
+        x_tmp = center[1] - radius*math.sin(-theta*math.pi/180.)
+        y_tmp = center[0] + radius*math.cos(-theta*math.pi/180.)        
+        
+        # REMOVE: old coordinate conversion method
+        # x_tmp = center[1] + (x_pos - center[1]) * math.cos(theta) - \
+        #                     (y_pos - center[0]) * math.sin(theta)
+        # y_tmp = center[0] + (x_pos - center[1]) * math.sin(theta) + \
+        #                     (y_pos - center[0]) * math.cos(theta)
 
         # Place a circular aperture at this position and sum up the flux inside the aperture
         aperture = CircularAperture((x_tmp, y_tmp), size)
