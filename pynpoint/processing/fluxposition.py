@@ -507,7 +507,9 @@ class FalsePositiveModule(ProcessingModule):
                  image_in_tag: str,
                  snr_out_tag: str,
                  position: Tuple[float, float],
+                 aperture_angles: Tuple[float, float],
                  aperture: float = 0.1,
+                 reference_in_tag: str = None,
                  ignore: bool = False,
                  optimize: bool = False,
                  **kwargs) -> None:
@@ -519,6 +521,8 @@ class FalsePositiveModule(ProcessingModule):
         image_in_tag : str
             Tag of the database entry with the images that are read as input. The SNR/FPF is
             calculated for each image in the dataset.
+        reference_in_tag : str
+            ToDo!
         snr_out_tag : str
             Tag of the database entry that is written as output. The output format is: (x position
             (pix), y position (pix), separation (arcsec), position angle (deg), SNR, FPF). The
@@ -529,6 +533,8 @@ class FalsePositiveModule(ProcessingModule):
             left of the image is defined as (-0.5, -0.5) so there is a -1.0 offset with respect
             to the DS9 coordinate system. Aperture photometry corrects for the partial inclusion
             of pixels at the boundary.
+        aperture_angles : tuple(float, float)
+            ToDo!
         aperture : float
             Aperture radius (arcsec).
         ignore : bool
@@ -567,12 +573,18 @@ class FalsePositiveModule(ProcessingModule):
                           '\'offset\' instead (e.g. offset=3.0).', DeprecationWarning)
 
         super(FalsePositiveModule, self).__init__(name_in)
+        
+        if reference_in_tag == None:
+            self.m_reference_in_port = self.add_input_port(image_in_tag)
+        else:
+            self.m_reference_in_port = self.add_input_port(reference_in_tag)
 
         self.m_image_in_port = self.add_input_port(image_in_tag)
         self.m_snr_out_port = self.add_output_port(snr_out_tag)
 
         self.m_position = position
         self.m_aperture = aperture
+        self.m_aperture_angles = aperture_angles
         self.m_ignore = ignore
         self.m_optimize = optimize
 
