@@ -502,7 +502,6 @@ class FalsePositiveModule(ProcessingModule):
     #----------ToDos--------------------ToDos--------------------ToDos----------
     # TODO Correct the optimize feature
     # TODO Check Module with Test case
-    # TODO If intervals are overlapping, concatenate them to one interval
     # TODO Documentation
     #---------------------------------------------------------------------------
 
@@ -652,19 +651,21 @@ class FalsePositiveModule(ProcessingModule):
         # Concatenate overlapping intervals in the reference aperture angles
         aperture_angles = self.m_aperture_angles
 
-        aperture_angles = aperture_angles[aperture_angles[:, 0].argsort()]
+        if aperture_angles.size > 2:
+            aperture_angles = aperture_angles[aperture_angles[:, 0].argsort()]
+            a_con = np.atleast_2d(aperture_angles[0, :])
 
-        a_con = np.atleast_2d(aperture_angles[0, :])
-
-        for temp in aperture_angles:
-            if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
-                a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
-                                                   (temp[1] - a_con[-1, 0]) % 360.)) % 360.
-            else:
-                a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
-        if a_con[0, 0] <= a_con[-1, 1]:
-            a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
-            a_con = np.delete(a_con, 0, axis=0)
+            for temp in aperture_angles:
+                if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
+                    a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
+                                                       (temp[1] - a_con[-1, 0]) % 360.)) % 360.
+                else:
+                    a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
+            if (a_con[0, 0] <= a_con[-1, 1]) and (a_con[-1, 1] < a_con[-1, 0]):
+                a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
+                a_con = np.delete(a_con, 0, axis=0)
+        else:
+            a_con = aperture_angles
 
         nimages = self.m_image_in_port.get_shape()[0]
 

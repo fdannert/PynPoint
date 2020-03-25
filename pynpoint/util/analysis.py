@@ -49,8 +49,10 @@ def false_alarm(image: np.ndarray,
     y_pos : float
         The planet position (pix) along the vertical axis. The pixel coordinates of the bottom-left
         corner of the image are (-0.5, -0.5).
-    aperture_angles : tuple(float,float)
-        ToDo!
+    aperture_angles : np.ndarray
+        The angle intervals in which the reference apertures are allowed. The angles are measured
+        from the positive y-axis in a clockwise manner. Input must have dimension Nx2 and
+        overlapping intervals are not allowed. Give [0., 360.] if all angles can be used.
     size : float
         The radius of the references apertures (in pixels). Usually, this values should be chosen
         close to lambda over D, that is, the typical FWHM of the PSF.
@@ -77,11 +79,14 @@ def false_alarm(image: np.ndarray,
     """
 
     #----------ToDos--------------------ToDos--------------------ToDos----------
-    # TODO Reimplement ignore feature
-    # TODO Test if positions of reference apertures are correct. Best would be to export and plot all
+    # TODO Test if positions of reference apertures are correct. Best would be to export and plot
     #   all reference aperture positions
     # TODO Documentation
+    # TODO Implement separate reference noise images
     #---------------------------------------------------------------------------
+
+    # Check if full frame can be used for reference frames
+    use_angles = not np.array_equal(aperture_angles, np.array(((0., 360.),)))
 
     # Convert aperture angles to radians
     aperture_angles = np.array(aperture_angles)*math.pi/180.
@@ -114,6 +119,9 @@ def false_alarm(image: np.ndarray,
     # Initialize a numpy array in which we will store the integrated flux of all reference
     # apertures
     ap_phot = np.zeros(num_ap)
+
+    # Initialize a list in which the indices for the reference frames inside the specified
+    # angle intervals are
     to_keep = []
 
     # Compute half of the angular size of an aperture at distance 'radius'
@@ -134,17 +142,27 @@ def false_alarm(image: np.ndarray,
         phot_table = aperture_photometry(image, aperture, method='exact')
         ap_phot[i] = phot_table['aperture_sum']
 
-        a_ref = (math.pi/2. - math.atan2(y_tmp-center[1], x_tmp-center[0])) % (2.*math.pi)
+        # If not the full frame can be used for reference apertures, find the indices of the
+        # allowed apertures
+        if use_angles:
 
-        for j in range(aperture_angles.shape[0]):
-            if (i != 0) \
-                    & (((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
-                       > ((a_ref-a_aperture-aperture_angles[j, 0]) % (2.*math.pi))) \
-                    & (((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
-                       > ((a_ref+a_aperture-aperture_angles[j, 0]) % (2.*math.pi))):
-                to_keep.append(i)
+            # Compute the angle of the current aperture to the positive y-axis
+            a_ref = (math.pi/2. - math.atan2(y_tmp-center[1], x_tmp-center[0])) % (2.*math.pi)
+            for j in range(aperture_angles.shape[0]):
 
-        a = 1  # TODO remove
+                # Always include the signal aperture '0'. If the outside borders of the aperture
+                # are within the specified angle intervals, keep it as a reference aperture
+                if (i == 0) \
+                        or ((((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
+                             > ((a_ref-a_aperture-aperture_angles[j, 0]) % (2.*math.pi)))
+                            and (((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
+                                 > ((a_ref+a_aperture-aperture_angles[j, 0]) % (2.*math.pi)))):
+                    to_keep.append(i)
+
+    # Limit the apertures to the signal aperture and the allowed apertures
+    if use_angles:
+        ap_phot = ap_phot[to_keep]
+        num_ap = ap_phot.size
 
     # Define shortcuts to the signal and the noise aperture sums
     signal_aperture = ap_phot[0]
