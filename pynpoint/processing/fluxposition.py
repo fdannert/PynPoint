@@ -500,9 +500,10 @@ class FalsePositiveModule(ProcessingModule):
     """
 
     #----------ToDos--------------------ToDos--------------------ToDos----------
-    # - Correct the optimize feature
-    # - Check Module with Test case
-    
+    # TODO Correct the optimize feature
+    # TODO Check Module with Test case
+    # TODO If intervals are overlapping, concatenate them to one interval
+    # TODO Documentation
     #---------------------------------------------------------------------------
 
     __author__ = 'Tomas Stolker'
@@ -513,7 +514,7 @@ class FalsePositiveModule(ProcessingModule):
                  image_in_tag: str,
                  snr_out_tag: str,
                  position: Tuple[float, float],
-                 aperture_angles: Tuple[float, float],
+                 aperture_angles: Union[List, np.ndarray] = None,
                  aperture: float = 0.1,
                  reference_in_tag: str = None,
                  ignore: bool = False,
@@ -528,7 +529,7 @@ class FalsePositiveModule(ProcessingModule):
             Tag of the database entry with the images that are read as input. The SNR/FPF is
             calculated for each image in the dataset.
         reference_in_tag : str
-            ToDo!
+            TODO
         snr_out_tag : str
             Tag of the database entry that is written as output. The output format is: (x position
             (pix), y position (pix), separation (arcsec), position angle (deg), SNR, FPF). The
@@ -540,7 +541,7 @@ class FalsePositiveModule(ProcessingModule):
             to the DS9 coordinate system. Aperture photometry corrects for the partial inclusion
             of pixels at the boundary.
         aperture_angles : tuple(float, float)
-            ToDo!
+            TODO
         aperture : float
             Aperture radius (arcsec).
         ignore : bool
@@ -580,13 +581,23 @@ class FalsePositiveModule(ProcessingModule):
 
         super(FalsePositiveModule, self).__init__(name_in)
         
-        if reference_in_tag == None:
+        if reference_in_tag is None:
             self.m_reference_in_port = self.add_input_port(image_in_tag)
         else:
             self.m_reference_in_port = self.add_input_port(reference_in_tag)
             
-        if aperture_angles == None:
-            aperture_angles = [0., 360.]
+        if aperture_angles is None:
+            aperture_angles = np.array(((0., 360.),))
+            
+        aperture_angles = np.atleast_2d(aperture_angles)
+        if np.transpose(aperture_angles).shape[0] != 2:
+            raise ValueError('The \'aperture_angles\' array must be a Nx2 numpy array')
+        
+        # Split overhanging reference aperture intervals TODO remove
+        for i,b in enumerate(aperture_angles[:,0]>aperture_angles[:,1]):
+            if b:
+                aperture_angles = np.append(aperture_angles, [[0., aperture_angles[i,1]]], axis = 0)
+                aperture_angles[i,1] = 360.        
 
         self.m_image_in_port = self.add_input_port(image_in_tag)
         self.m_snr_out_port = self.add_output_port(snr_out_tag)
@@ -638,6 +649,23 @@ class FalsePositiveModule(ProcessingModule):
         pixscale = self.m_image_in_port.get_attribute('PIXSCALE')
         self.m_aperture /= pixscale
 
+        # Concatenate overlapping intervals in the reference aperture angles
+        aperture_angles = self.m_aperture_angles
+
+        aperture_angles = aperture_angles[aperture_angles[:, 0].argsort()]
+
+        a_con = np.atleast_2d(aperture_angles[0, :])
+
+        for temp in aperture_angles:
+            if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
+                a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
+                                                   (temp[1] - a_con[-1, 0]) % 360.)) % 360.
+            else:
+                a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
+        if a_con[0, 0] <= a_con[-1, 1]:
+            a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
+            a_con = np.delete(a_con, 0, axis=0)
+
         nimages = self.m_image_in_port.get_shape()[0]
 
         start_time = time.time()
@@ -667,7 +695,7 @@ class FalsePositiveModule(ProcessingModule):
                 _, _, snr, fpf = false_alarm(image=image,
                                              x_pos=self.m_position[0],
                                              y_pos=self.m_position[1],
-                                             aperture_angles=self.m_aperture_angles,
+                                             aperture_angles=a_con,
                                              size=self.m_aperture,
                                              ignore=self.m_ignore)
 

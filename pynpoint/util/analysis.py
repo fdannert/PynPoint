@@ -24,7 +24,7 @@ from pynpoint.util.residuals import combine_residuals
 def false_alarm(image: np.ndarray,
                 x_pos: float,
                 y_pos: float,
-                aperture_angles: Tuple[float, float],
+                aperture_angles: np.ndarray,
                 size: float,
                 ignore: bool) -> Tuple[float, float, float, float]:
     """
@@ -49,7 +49,7 @@ def false_alarm(image: np.ndarray,
     y_pos : float
         The planet position (pix) along the vertical axis. The pixel coordinates of the bottom-left
         corner of the image are (-0.5, -0.5).
-    aperture_angle : tuple(float,float)
+    aperture_angles : tuple(float,float)
         ToDo!
     size : float
         The radius of the references apertures (in pixels). Usually, this values should be chosen
@@ -75,15 +75,16 @@ def false_alarm(image: np.ndarray,
     fpf :
         The false positive fraction (FPF) as defined by Mawet et al. (2014) in eq. (10).
     """
-    
+
     #----------ToDos--------------------ToDos--------------------ToDos----------
-    # - Reimplement ignore feature
-    # - Test if positions of reference apertures are correct. Best would be to export and plot all
+    # TODO Reimplement ignore feature
+    # TODO Test if positions of reference apertures are correct. Best would be to export and plot all
     #   all reference aperture positions
-    
-    
+    # TODO Documentation
     #---------------------------------------------------------------------------
-    
+
+    # Convert aperture angles to radians
+    aperture_angles = np.array(aperture_angles)*math.pi/180.
 
     # Compute the center of the current frame (with subpixel precision) and use it to compute the
     # radius of the given position in polar coordinates (with the origin at the center of the 
@@ -92,54 +93,58 @@ def false_alarm(image: np.ndarray,
     radius = math.sqrt((center[0] - y_pos)**2 + (center[1] - x_pos)**2)
 
     # Compute the number of apertures which we can place at the separation of  the given position
-    num_ap = int(((aperture_angles[1]-aperture_angles[0])*math.pi*radius/size/360.)-1)
-    
+    num_ap = int(math.pi * radius / size)
+
     # Compute the angles at which to place the reference apertures
-    ap_theta = np.linspace(aperture_angles[0]+180.*size/math.pi/radius, 
-                           aperture_angles[1]-180.*size/math.pi/radius,
-                           num_ap, endpoint=False)
+    ap_theta = np.linspace(0, 2 * math.pi, num_ap, endpoint=False)
 
     # If ignore is True, delete the apertures immediately right and left of the aperture placed on
     # the planet signal. These apertures often contain "self-subtraction wings", which means they
     # cannot be considered to originate from the same distribution. In accordance with section 3.2
     # of Mawet et al. (2014), such apertures are ignored to prevent bias.
     if ignore:
-        pass
-        #num_ap -= 2
-        #ap_theta = np.delete(ap_theta, [1, np.size(ap_theta) - 1])
+        num_ap -= 2
+        ap_theta = np.delete(ap_theta, [1, np.size(ap_theta) - 1])
 
     # If the number of apertures is 2 or less, we cannot compute the false positive fraction
     if num_ap < 3:
         raise ValueError(f'Number of apertures (num_ap={num_ap}) is too small to calculate the '
                          'false positive fraction.')
 
-    # Initialize a numpy array in which we will store the integrated flux of all reference 
-    # apertures (number of apertures needs to include signal aperture)
-    num_ap += 1
+    # Initialize a numpy array in which we will store the integrated flux of all reference
+    # apertures
     ap_phot = np.zeros(num_ap)
-    
-    # Create signal aperture as 0th component of the aperture photometry array
-    aperture = CircularAperture((x_pos, y_pos), size)
-    phot_table = aperture_photometry(image, aperture, method='exact')
-    ap_phot[0] = phot_table['aperture_sum']    
+    to_keep = []
 
-    # Loop over all reference apertures and measure the integrated flux in the reference apertures
+    # Compute half of the angular size of an aperture at distance 'radius'
+    a_aperture = 2.*math.asin(size/radius/2.)
+
+    # Loop over all reference apertures and measure the integrated flux
     for i, theta in enumerate(ap_theta):
 
-        # Compute the position of the current aperture in polar coordinates and convert to Cartesian
-        x_tmp = center[1] - radius*math.sin(-theta*math.pi/180.)
-        y_tmp = center[0] + radius*math.cos(-theta*math.pi/180.)        
-        
-        # REMOVE: old coordinate conversion method
-        # x_tmp = center[1] + (x_pos - center[1]) * math.cos(theta) - \
-        #                     (y_pos - center[0]) * math.sin(theta)
-        # y_tmp = center[0] + (x_pos - center[1]) * math.sin(theta) + \
-        #                     (y_pos - center[0]) * math.cos(theta)
+        # Compute the position of the current aperture in polar coordinates and convert to 
+        # Cartesian
+        x_tmp = center[1] + (x_pos - center[1]) * math.cos(theta) - \
+                            (y_pos - center[0]) * math.sin(theta)
+        y_tmp = center[0] + (x_pos - center[1]) * math.sin(theta) + \
+                            (y_pos - center[0]) * math.cos(theta)
 
         # Place a circular aperture at this position and sum up the flux inside the aperture
         aperture = CircularAperture((x_tmp, y_tmp), size)
         phot_table = aperture_photometry(image, aperture, method='exact')
         ap_phot[i] = phot_table['aperture_sum']
+
+        a_ref = (math.pi/2. - math.atan2(y_tmp-center[1], x_tmp-center[0])) % (2.*math.pi)
+
+        for j in range(aperture_angles.shape[0]):
+            if (i != 0) \
+                    & (((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
+                       > ((a_ref-a_aperture-aperture_angles[j, 0]) % (2.*math.pi))) \
+                    & (((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
+                       > ((a_ref+a_aperture-aperture_angles[j, 0]) % (2.*math.pi))):
+                to_keep.append(i)
+
+        a = 1  # TODO remove
 
     # Define shortcuts to the signal and the noise aperture sums
     signal_aperture = ap_phot[0]
@@ -151,8 +156,9 @@ def false_alarm(image: np.ndarray,
     signal = signal_aperture - np.mean(noise_apertures)
 
     # Compute the "noise", that is, the denominator of the signal-to-noise-ratio: According to
-    # eq. (8) in Mawet et al. (2014), this is given by the standard deviation of the integrated flux
-    # in the noise apertures times a correction factor to account for the small sample statistics.
+    # eq. (8) in Mawet et al. (2014), this is given by the standard deviation of the integrated 
+    # flux in the noise apertures times a correction factor to account for the small sample 
+    # statistics.
     # NOTE: `ddof=1` is a necessary argument for np.std() in order to compute the *unbiased*
     #       estimate (i.e., including Bessel's corrections) of the standard deviation.
     noise = np.std(ap_phot[1:], ddof=1) * math.sqrt(1 + 1 / (num_ap - 1))
@@ -164,8 +170,8 @@ def false_alarm(image: np.ndarray,
     # FPF is given by 1 - F_nu(SNR), where F_nu is the cumulative distribution function (CDF) of a
     # t-distribution with `nu = n-1` degrees of freedom (see Section 3 of Mawet et al. (2014) for
     # more details on the Student's t distribution).
-    # For numerical reasons, we use the survival function (SF), which is defined precisely as 1-CDF,
-    # but may give more accurate results according to the scipy documentation.
+    # For numerical reasons, we use the survival function (SF), which is defined precisely as 
+    # 1-CDF, but may give more accurate results according to the scipy documentation.
     fpf = t.sf(snr, df=(num_ap - 2))
 
     return signal_aperture, noise, snr, fpf
