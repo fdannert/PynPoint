@@ -499,11 +499,11 @@ class FalsePositiveModule(ProcessingModule):
     Optionally, the SNR can be optimized with the aperture position as free parameter.
     """
 
-    #----------ToDos--------------------ToDos--------------------ToDos----------
+    # ----------ToDos--------------------ToDos--------------------ToDos----------
     # TODO Correct the optimize feature
     # TODO Check Module with Test case
     # TODO Documentation
-    #---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
 
     __author__ = 'Tomas Stolker'
 
@@ -579,31 +579,50 @@ class FalsePositiveModule(ProcessingModule):
                           '\'offset\' instead (e.g. offset=3.0).', DeprecationWarning)
 
         super(FalsePositiveModule, self).__init__(name_in)
-        
+
         if reference_in_tag is None:
             self.m_reference_in_port = self.add_input_port(image_in_tag)
         else:
             self.m_reference_in_port = self.add_input_port(reference_in_tag)
-            
+
         if aperture_angles is None:
             aperture_angles = np.array(((0., 360.),))
-            
+
         aperture_angles = np.atleast_2d(aperture_angles)
         if np.transpose(aperture_angles).shape[0] != 2:
             raise ValueError('The \'aperture_angles\' array must be a Nx2 numpy array')
-        
-        # Split overhanging reference aperture intervals TODO remove
-        for i,b in enumerate(aperture_angles[:,0]>aperture_angles[:,1]):
-            if b:
-                aperture_angles = np.append(aperture_angles, [[0., aperture_angles[i,1]]], axis = 0)
-                aperture_angles[i,1] = 360.        
+
+        # If there is more than one angle interval specified, check the intervals for overlap and
+        # concatenate them
+        if aperture_angles.size > 2:
+
+            # The concatenation respects the cyclic nature of the intervals
+            aperture_angles = aperture_angles[aperture_angles[:, 0].argsort()]
+            a_con = np.atleast_2d(aperture_angles[0, :])
+
+            for temp in aperture_angles:
+
+                if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
+                    a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
+                                                       (temp[1] - a_con[-1, 0]) % 360.)) % 360.
+
+                else:
+                    a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
+
+            # If there is a final interval wrapping over 0 deg, the concatenation performed
+            if (a_con[0, 0] <= a_con[-1, 1]) and (a_con[-1, 1] < a_con[-1, 0]):
+                a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
+                a_con = np.delete(a_con, 0, axis=0)
+
+        else:
+            a_con = aperture_angles
 
         self.m_image_in_port = self.add_input_port(image_in_tag)
         self.m_snr_out_port = self.add_output_port(snr_out_tag)
 
         self.m_position = position
         self.m_aperture = aperture
-        self.m_aperture_angles = aperture_angles
+        self.m_aperture_angles = a_con
         self.m_ignore = ignore
         self.m_optimize = optimize
 
@@ -623,7 +642,9 @@ class FalsePositiveModule(ProcessingModule):
         def _snr_optimize(arg):
             pos_x, pos_y = arg
 
+            # If offset limit is defined, check if specified position is within offset
             if self.m_offset is not None:
+
                 if pos_x < self.m_position[0] - self.m_offset or \
                         pos_x > self.m_position[0] + self.m_offset:
                     snr = 0.
@@ -635,6 +656,7 @@ class FalsePositiveModule(ProcessingModule):
                 else:
                     snr = None
 
+            # Calculate snr at the specified position
             if self.m_offset is None or snr is None:
                 _, _, snr, _ = false_alarm(image=image,
                                            x_pos=pos_x,
@@ -645,27 +667,9 @@ class FalsePositiveModule(ProcessingModule):
 
             return -snr
 
+        # Calculate the size of the apertures in pixels
         pixscale = self.m_image_in_port.get_attribute('PIXSCALE')
         self.m_aperture /= pixscale
-
-        # Concatenate overlapping intervals in the reference aperture angles
-        aperture_angles = self.m_aperture_angles
-
-        if aperture_angles.size > 2:
-            aperture_angles = aperture_angles[aperture_angles[:, 0].argsort()]
-            a_con = np.atleast_2d(aperture_angles[0, :])
-
-            for temp in aperture_angles:
-                if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
-                    a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
-                                                       (temp[1] - a_con[-1, 0]) % 360.)) % 360.
-                else:
-                    a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
-            if (a_con[0, 0] <= a_con[-1, 1]) and (a_con[-1, 1] < a_con[-1, 0]):
-                a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
-                a_con = np.delete(a_con, 0, axis=0)
-        else:
-            a_con = aperture_angles
 
         nimages = self.m_image_in_port.get_shape()[0]
 
@@ -687,6 +691,7 @@ class FalsePositiveModule(ProcessingModule):
                 _, _, snr, fpf = false_alarm(image=image,
                                              x_pos=result.x[0],
                                              y_pos=result.x[1],
+                                             aperture_angles=self.m_aperture_angles,
                                              size=self.m_aperture,
                                              ignore=self.m_ignore)
 
@@ -696,7 +701,7 @@ class FalsePositiveModule(ProcessingModule):
                 _, _, snr, fpf = false_alarm(image=image,
                                              x_pos=self.m_position[0],
                                              y_pos=self.m_position[1],
-                                             aperture_angles=a_con,
+                                             aperture_angles=self.m_aperture_angles,
                                              size=self.m_aperture,
                                              ignore=self.m_ignore)
 

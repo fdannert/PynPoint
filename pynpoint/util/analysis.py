@@ -78,12 +78,12 @@ def false_alarm(image: np.ndarray,
         The false positive fraction (FPF) as defined by Mawet et al. (2014) in eq. (10).
     """
 
-    #----------ToDos--------------------ToDos--------------------ToDos----------
+    # ----------ToDos--------------------ToDos--------------------ToDos----------
     # TODO Test if positions of reference apertures are correct. Best would be to export and plot
     #   all reference aperture positions
     # TODO Documentation
     # TODO Implement separate reference noise images
-    #---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
 
     # Check if full frame can be used for reference frames
     use_angles = not np.array_equal(aperture_angles, np.array(((0., 360.),)))
