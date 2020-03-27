@@ -22,6 +22,7 @@ from pynpoint.util.residuals import combine_residuals
 
 @typechecked
 def false_alarm(image: np.ndarray,
+                reference: np.ndarray,
                 x_pos: float,
                 y_pos: float,
                 aperture_angles: np.ndarray,
@@ -43,13 +44,15 @@ def false_alarm(image: np.ndarray,
     image : numpy.ndarray
         The input image as a 2D numpy array. For example, this could be a residual frame returned 
         by a :class:`.PcaPsfSubtractionModule`.
+    reference : numpy.ndarray
+        The reference image as a 2D numpy array.
     x_pos : float
         The planet position (in pixels) along the horizontal axis. The pixel coordinates of the
         bottom-left corner of the image are (-0.5, -0.5).
     y_pos : float
         The planet position (pix) along the vertical axis. The pixel coordinates of the bottom-left
         corner of the image are (-0.5, -0.5).
-    aperture_angles : np.ndarray
+    aperture_angles : numpy.ndarray
         The angle intervals in which the reference apertures are allowed. The angles are measured
         from the positive y-axis in a clockwise manner. Input must have dimension Nx2 and
         overlapping intervals are not allowed. Give [0., 360.] if all angles can be used.
@@ -77,13 +80,6 @@ def false_alarm(image: np.ndarray,
     fpf :
         The false positive fraction (FPF) as defined by Mawet et al. (2014) in eq. (10).
     """
-
-    # ----------ToDos--------------------ToDos--------------------ToDos----------
-    # TODO Test if positions of reference apertures are correct. Best would be to export and plot
-    #   all reference aperture positions
-    # TODO Documentation
-    # TODO Implement separate reference noise images
-    # ---------------------------------------------------------------------------
 
     # Check if full frame can be used for reference frames
     use_angles = not np.array_equal(aperture_angles, np.array(((0., 360.),)))
@@ -127,8 +123,14 @@ def false_alarm(image: np.ndarray,
     # Compute half of the angular size of an aperture at distance 'radius'
     a_aperture = 2.*math.asin(size/radius/2.)
 
+    # Measure the integrated flux in the signal aperture, use image frames
+    aperture = CircularAperture((x_pos, y_pos), size)
+    phot_table = aperture_photometry(image, aperture, method='exact')
+    ap_phot[0] = phot_table['aperture_sum']
+    to_keep.append(0)
+
     # Loop over all reference apertures and measure the integrated flux
-    for i, theta in enumerate(ap_theta):
+    for i, theta in enumerate(ap_theta[1:]):
 
         # Compute the position of the current aperture in polar coordinates and convert to 
         # Cartesian
@@ -137,10 +139,11 @@ def false_alarm(image: np.ndarray,
         y_tmp = center[0] + (x_pos - center[1]) * math.sin(theta) + \
                             (y_pos - center[0]) * math.cos(theta)
 
-        # Place a circular aperture at this position and sum up the flux inside the aperture
+        # Place a circular aperture at this position and sum up the flux inside the aperture, use
+        # reference frames
         aperture = CircularAperture((x_tmp, y_tmp), size)
-        phot_table = aperture_photometry(image, aperture, method='exact')
-        ap_phot[i] = phot_table['aperture_sum']
+        phot_table = aperture_photometry(reference, aperture, method='exact')
+        ap_phot[i+1] = phot_table['aperture_sum']
 
         # If not the full frame can be used for reference apertures, find the indices of the
         # allowed apertures
@@ -152,12 +155,11 @@ def false_alarm(image: np.ndarray,
 
                 # Always include the signal aperture '0'. If the outside borders of the aperture
                 # are within the specified angle intervals, keep it as a reference aperture
-                if (i == 0) \
-                        or ((((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
-                             > ((a_ref-a_aperture-aperture_angles[j, 0]) % (2.*math.pi)))
-                            and (((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
-                                 > ((a_ref+a_aperture-aperture_angles[j, 0]) % (2.*math.pi)))):
-                    to_keep.append(i)
+                if ((((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
+                     > ((a_ref-a_aperture-aperture_angles[j, 0]) % (2.*math.pi)))
+                        and (((aperture_angles[j, 1]-aperture_angles[j, 0]) % (2.*math.pi))
+                             > ((a_ref+a_aperture-aperture_angles[j, 0]) % (2.*math.pi)))):
+                    to_keep.append(i+1)
 
     # Limit the apertures to the signal aperture and the allowed apertures
     if use_angles:

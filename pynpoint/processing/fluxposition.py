@@ -199,10 +199,10 @@ class SimplexMinimizationModule(ProcessingModule):
             residuals are stored for each step of the minimization. The last image contains the
             best-fit residuals.
         flux_position_tag : str
-            Tag of the database entry with the flux and position results that are written as output.
-            Each step of the minimization stores the x position (pix), y position (pix), separation
-            (arcsec), angle (deg), contrast (mag), and the chi-square value. The last row contains
-            the best-fit results.
+            Tag of the database entry with the flux and position results that are written as
+            output. Each step of the minimization stores the x position (pix), y position (pix),
+            separation (arcsec), angle (deg), contrast (mag), and the chi-square value. The last
+            row contains the best-fit results.
         position : tuple(int, int)
             Approximate position (x, y) of the planet (pix). This is also the location where the
             figure of merit is calculated within an aperture of radius ``aperture``.
@@ -499,13 +499,7 @@ class FalsePositiveModule(ProcessingModule):
     Optionally, the SNR can be optimized with the aperture position as free parameter.
     """
 
-    # ----------ToDos--------------------ToDos--------------------ToDos----------
-    # TODO Correct the optimize feature
-    # TODO Check Module with Test case
-    # TODO Documentation
-    # ---------------------------------------------------------------------------
-
-    __author__ = 'Tomas Stolker'
+    __author__ = 'Tomas Stolker, Felix Dannert'
 
     @typechecked
     def __init__(self,
@@ -527,8 +521,6 @@ class FalsePositiveModule(ProcessingModule):
         image_in_tag : str
             Tag of the database entry with the images that are read as input. The SNR/FPF is
             calculated for each image in the dataset.
-        reference_in_tag : str
-            TODO
         snr_out_tag : str
             Tag of the database entry that is written as output. The output format is: (x position
             (pix), y position (pix), separation (arcsec), position angle (deg), SNR, FPF). The
@@ -539,10 +531,16 @@ class FalsePositiveModule(ProcessingModule):
             left of the image is defined as (-0.5, -0.5) so there is a -1.0 offset with respect
             to the DS9 coordinate system. Aperture photometry corrects for the partial inclusion
             of pixels at the boundary.
-        aperture_angles : tuple(float, float)
-            TODO
+        aperture_angles : list, numpy.ndarray
+            If specified, the noise reference apertures are only placed in these intervals. The
+            intervals must be given in degrees measured from the positive y-axis in a clockwise
+            manner.
         aperture : float
             Aperture radius (arcsec).
+        reference_in_tag : str
+            Tag of database entry to be used as reference frames for the noise calculation. The
+            signal is still taken from the `image_in_tag` images. Database must have same dimension
+            as `image_in_tag`.
         ignore : bool
             Ignore the two neighboring apertures that may contain self-subtraction from the planet.
         optimize : bool
@@ -580,11 +578,6 @@ class FalsePositiveModule(ProcessingModule):
 
         super(FalsePositiveModule, self).__init__(name_in)
 
-        if reference_in_tag is None:
-            self.m_reference_in_port = self.add_input_port(image_in_tag)
-        else:
-            self.m_reference_in_port = self.add_input_port(reference_in_tag)
-
         if aperture_angles is None:
             aperture_angles = np.array(((0., 360.),))
 
@@ -619,6 +612,14 @@ class FalsePositiveModule(ProcessingModule):
 
         self.m_image_in_port = self.add_input_port(image_in_tag)
         self.m_snr_out_port = self.add_output_port(snr_out_tag)
+
+        if reference_in_tag is None:
+            self.m_reference_in_port = None
+        else:
+            self.m_reference_in_port = self.add_input_port(reference_in_tag)
+            if self.m_reference_in_port.get_shape() != self.m_image_in_port.get_shape():
+                raise ValueError('The number and dimension of reference and image frames must be '
+                                 'equal')
 
         self.m_position = position
         self.m_aperture = aperture
@@ -659,6 +660,7 @@ class FalsePositiveModule(ProcessingModule):
             # Calculate snr at the specified position
             if self.m_offset is None or snr is None:
                 _, _, snr, _ = false_alarm(image=image,
+                                           reference=reference,
                                            x_pos=pos_x,
                                            y_pos=pos_y,
                                            aperture_angles=self.m_aperture_angles,
@@ -671,24 +673,41 @@ class FalsePositiveModule(ProcessingModule):
         pixscale = self.m_image_in_port.get_attribute('PIXSCALE')
         self.m_aperture /= pixscale
 
+        # Retrieve the number of images expected
         nimages = self.m_image_in_port.get_shape()[0]
 
         start_time = time.time()
 
+        # Check whether reference intervals are specified
+        use_reference = self.m_reference_in_port is not None
+
         for j in range(nimages):
             progress(j, nimages, 'Calculating S/N and FPF...', start_time)
 
+            # Load the j-th slice of the image cube
             image = self.m_image_in_port[j, ]
+
+            # If needed, load the j-th slice of the reference cube
+            if use_reference:
+                reference = self.m_reference_in_port[j, ]
+
+            else:
+                reference = image
+
             center = center_subpixel(image)
 
             if self.m_optimize:
+
+                # Find the optimal position by maximization of the SNR
                 result = minimize(fun=_snr_optimize,
                                   x0=[self.m_position[0], self.m_position[1]],
                                   method='Nelder-Mead',
                                   tol=None,
                                   options={'xatol': self.m_tolerance, 'fatol': float('inf')})
 
+                # Calculate the SNR and FPF for the optimal position
                 _, _, snr, fpf = false_alarm(image=image,
+                                             reference=reference,
                                              x_pos=result.x[0],
                                              y_pos=result.x[1],
                                              aperture_angles=self.m_aperture_angles,
@@ -698,7 +717,10 @@ class FalsePositiveModule(ProcessingModule):
                 x_pos, y_pos = result.x[0], result.x[1]
 
             else:
+
+                # Calculate the SNR and FPF for the specified position
                 _, _, snr, fpf = false_alarm(image=image,
+                                             reference=reference,
                                              x_pos=self.m_position[0],
                                              y_pos=self.m_position[1],
                                              aperture_angles=self.m_aperture_angles,
@@ -708,8 +730,9 @@ class FalsePositiveModule(ProcessingModule):
                 x_pos, y_pos = self.m_position[0], self.m_position[1]
 
             sep_ang = cartesian_to_polar(center, y_pos, x_pos)
-            result = np.column_stack((x_pos, y_pos, sep_ang[0]*pixscale, sep_ang[1], snr, fpf))
 
+            # For each slice of the cube, append the results to the output port
+            result = np.column_stack((x_pos, y_pos, sep_ang[0]*pixscale, sep_ang[1], snr, fpf))
             self.m_snr_out_port.append(result, data_dim=2)
 
         history = f'aperture [arcsec] = {self.m_aperture*pixscale:.2f}'
@@ -880,9 +903,9 @@ class MCMCsamplingModule(ProcessingModule):
         self.m_psf_in_port.close_port()
 
         if psf.shape[0] != 1 and psf.shape[0] != images.shape[0]:
-            raise ValueError('The number of frames in psf_in_tag does not match with the number of '
-                             'frames in image_in_tag. The DerotateAndStackModule can be used to '
-                             'average the PSF frames (without derotating) before applying the '
+            raise ValueError('The number of frames in psf_in_tag does not match with the number '
+                             'of frames in image_in_tag. The DerotateAndStackModule can be used '
+                             'to average the PSF frames (without derotating) before applying the '
                              'MCMCsamplingModule.')
 
         if self.m_mask[0] is not None:
@@ -987,7 +1010,8 @@ class MCMCsamplingModule(ProcessingModule):
 
         except emcee.autocorr.AutocorrError:
             autocorr = [np.nan, np.nan, np.nan]
-            print('The chain is too short to reliably estimate the autocorrelation time. [WARNING]')
+            print('The chain is too short to reliably estimate the autocorrelation time. '
+                  '[WARNING]')
 
         self.m_chain_out_port.add_attribute('AUTOCORR_0', autocorr[0], static=True)
         self.m_chain_out_port.add_attribute('AUTOCORR_1', autocorr[1], static=True)
