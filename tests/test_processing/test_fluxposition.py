@@ -184,16 +184,16 @@ class TestFluxPosition:
     def test_psf_subtraction(self):
 
         module = PcaPsfSubtractionModule(pca_numbers=[2, ],
-                                         name_in='pca',
+                                         name_in='pca1',
                                          images_in_tag='fake',
                                          reference_in_tag='fake',
-                                         res_mean_tag='res_mean',
+                                         res_mean_tag='res_mean1',
                                          extra_rot=0.)
 
         self.pipeline.add_module(module)
-        self.pipeline.run_module('pca')
+        self.pipeline.run_module('pca1')
 
-        data = self.pipeline.get_data('res_mean')
+        data = self.pipeline.get_data('res_mean1')
         assert np.allclose(data[0, 49, 31], 4.8963214463463886e-05, rtol=limit, atol=0.)
         assert np.allclose(np.mean(data), 1.8409659677297164e-08, rtol=limit, atol=0.)
         assert data.shape == (1, 101, 101)
@@ -204,7 +204,7 @@ class TestFluxPosition:
                                      aperture=0.1,
                                      ignore=True,
                                      name_in='false1',
-                                     image_in_tag='res_mean',
+                                     image_in_tag='res_mean1',
                                      snr_out_tag='snr_fpf1',
                                      optimize=False)
 
@@ -225,7 +225,7 @@ class TestFluxPosition:
                                      aperture=0.1,
                                      ignore=True,
                                      name_in='false2',
-                                     image_in_tag='res_mean',
+                                     image_in_tag='res_mean1',
                                      snr_out_tag='snr_fpf2',
                                      optimize=True,
                                      offset=0.1,
@@ -241,6 +241,59 @@ class TestFluxPosition:
         assert np.allclose(data[0, 3], 92.74019185433872, rtol=limit, atol=0.)
         assert np.allclose(data[0, 4], 7.831022605121996, rtol=limit, atol=0.)
         assert np.allclose(data[0, 5], 2.3375921055608217e-06, rtol=limit, atol=0.)
+
+    def test_false_positive_angles(self):
+        module = FalsePositiveModule(position=(31., 49.),
+                                     aperture=0.1,
+                                     aperture_angles=[[30, 150], [200, 350], [220, 300],
+                                                      [350, 40]],
+                                     ignore=True,
+                                     name_in='false3',
+                                     image_in_tag='res_mean1',
+                                     snr_out_tag='snr_fpf3',
+                                     optimize=False)
+
+        self.pipeline.add_module(module)
+        self.pipeline.run_module('false3')
+
+        data = self.pipeline.get_data('snr_fpf3')
+        assert np.allclose(data[0, 0], 31.0, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 1], 49.0, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 2], 0.513710034941892, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 3], 93.01278750418334, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 4], 6.957325916268468, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 5], 3.315251095658436e-05, rtol=limit, atol=0.)
+
+    def test_false_positive_reference(self):
+        module = PcaPsfSubtractionModule(pca_numbers=[2, ],
+                                         name_in='pca2',
+                                         images_in_tag='read',
+                                         reference_in_tag='read',
+                                         res_mean_tag='res_mean2',
+                                         extra_rot=0.)
+
+        self.pipeline.add_module(module)
+        self.pipeline.run_module('pca2')
+
+        module = FalsePositiveModule(position=(31., 49.),
+                                     aperture=0.1,
+                                     reference_in_tag='res_mean2',
+                                     ignore=True,
+                                     name_in='false4',
+                                     image_in_tag='res_mean1',
+                                     snr_out_tag='snr_fpf4',
+                                     optimize=False)
+
+        self.pipeline.add_module(module)
+        self.pipeline.run_module('false4')
+
+        data = self.pipeline.get_data('snr_fpf4')
+        assert np.allclose(data[0, 0], 31.0, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 1], 49.0, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 2], 0.513710034941892, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 3], 93.01278750418334, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 4], 5.732604258876715, rtol=limit, atol=0.)
+        assert np.allclose(data[0, 5], 4.708593182147344e-05, rtol=limit, atol=0.)
 
     def test_simplex_minimization_hessian(self):
 
