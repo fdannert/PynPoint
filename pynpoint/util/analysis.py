@@ -22,12 +22,12 @@ from pynpoint.util.residuals import combine_residuals
 
 @typechecked
 def false_alarm(image: np.ndarray,
-                reference: np.ndarray,
                 x_pos: float,
                 y_pos: float,
-                aperture_angles: np.ndarray,
                 size: float,
-                ignore: bool) -> Tuple[float, float, float, float]:
+                ignore: bool,
+                reference: np.ndarray = None,
+                aperture_angles: np.ndarray = None) -> Tuple[float, float, float, float]:
     """
     Compute the signal-to-noise ratio (SNR), which is formally defined as the test statistic of a
     two-sample t-test, and related quantities (such as the FPF) at a given position in an image.
@@ -42,53 +42,58 @@ def false_alarm(image: np.ndarray,
     Parameters
     ----------
     image : numpy.ndarray
-        The input image as a 2D numpy array. For example, this could be a residual frame returned 
+        The input image as a 2D numpy array. For example, this could be a residual frame returned
         by a :class:`.PcaPsfSubtractionModule`.
-    reference : numpy.ndarray
-        The reference image as a 2D numpy array.
     x_pos : float
         The planet position (in pixels) along the horizontal axis. The pixel coordinates of the
         bottom-left corner of the image are (-0.5, -0.5).
     y_pos : float
-        The planet position (pix) along the vertical axis. The pixel coordinates of the bottom-left
-        corner of the image are (-0.5, -0.5).
-    aperture_angles : numpy.ndarray
-        The angle intervals in which the reference apertures are allowed. The angles are measured
-        from the positive y-axis in a clockwise manner. Input must have dimension Nx2 and
-        overlapping intervals are not allowed. Give [0., 360.] if all angles can be used.
+        The planet position (in pixels) along the vertical axis. The pixel coordinates of the
+        bottom-left corner of the image are (-0.5, -0.5).
     size : float
         The radius of the references apertures (in pixels). Usually, this values should be chosen
         close to lambda over D, that is, the typical FWHM of the PSF.
     ignore : bool
-        Whether or not to ignore the immediate neighboring apertures for the noise estimate. This 
+        Whether or not to ignore the immediate neighboring apertures for the noise estimate. This
         is desirable in case there are "self-subtraction wings" left and right of the planet which
-        would bias the estimation of the noise level at the separation of the planet if not 
+        would bias the estimation of the noise level at the separation of the planet if not
         ignored.
+    reference : numpy.ndarray
+        The reference image as a 2D numpy array. If `None` is given, the reference apertures are
+        placed in the `image` input
+    aperture_angles : numpy.ndarray
+        The angle intervals in which the reference apertures are allowed. The angles are measured
+        from the positive y-axis in a clockwise manner. Input must have dimension Nx2 and
+        overlapping intervals are not allowed. If `None` is given, all angles are used.
 
     Returns
     -------
     signal_sum :
         The integrated (summed up) flux inside the signal aperture.
 
-        Please note that this is **not** identical to the numerator of the fraction defining the 
+        Please note that this is **not** identical to the numerator of the fraction defining the
         SNR(which is given by the `signal_sum` minus the mean of the noise apertures).
     noise :
-        The denominator of the SNR, i.e., the standard deviation of the integrated flux of the 
+        The denominator of the SNR, i.e., the standard deviation of the integrated flux of the
         noise apertures, times a correction factor that accounts for small sample statistics.
     snr :
         The signal-to-noise ratio (SNR) as defined by Mawet et al. (2014) in eq. (8).
     fpf :
         The false positive fraction (FPF) as defined by Mawet et al. (2014) in eq. (10).
     """
+    # Check if reference frames and aperture angles should be used
+    use_angles = aperture_angles is not None
+    use_reference = reference is not None
 
-    # Check if full frame can be used for reference frames
-    use_angles = not np.array_equal(aperture_angles, np.array(((0., 360.),)))
+    # If no aperture angles are defined, set them to the whole arc for the following calculation
+    if aperture_angles is None:
+        aperture_angles = np.array(((0., 360.),))
 
     # Convert aperture angles to radians
     aperture_angles = np.array(aperture_angles)*math.pi/180.
 
     # Compute the center of the current frame (with subpixel precision) and use it to compute the
-    # radius of the given position in polar coordinates (with the origin at the center of the 
+    # radius of the given position in polar coordinates (with the origin at the center of the
     # frame)
     center = center_subpixel(image)
     radius = math.sqrt((center[0] - y_pos)**2 + (center[1] - x_pos)**2)
@@ -132,17 +137,20 @@ def false_alarm(image: np.ndarray,
     # Loop over all reference apertures and measure the integrated flux
     for i, theta in enumerate(ap_theta[1:]):
 
-        # Compute the position of the current aperture in polar coordinates and convert to 
+        # Compute the position of the current aperture in polar coordinates and convert to
         # Cartesian
         x_tmp = center[1] + (x_pos - center[1]) * math.cos(theta) - \
                             (y_pos - center[0]) * math.sin(theta)
         y_tmp = center[0] + (x_pos - center[1]) * math.sin(theta) + \
                             (y_pos - center[0]) * math.cos(theta)
 
-        # Place a circular aperture at this position and sum up the flux inside the aperture, use
-        # reference frames
+        # Place a circular aperture at this position and sum up the flux inside the aperture.
+        # Depending on the test above, use reference or image frames
         aperture = CircularAperture((x_tmp, y_tmp), size)
-        phot_table = aperture_photometry(reference, aperture, method='exact')
+        if use_reference:
+            phot_table = aperture_photometry(reference, aperture, method='exact')
+        else:
+            phot_table = aperture_photometry(image, aperture, method='exact')
         ap_phot[i+1] = phot_table['aperture_sum']
 
         # If not the full frame can be used for reference apertures, find the indices of the
@@ -176,8 +184,8 @@ def false_alarm(image: np.ndarray,
     signal = signal_aperture - np.mean(noise_apertures)
 
     # Compute the "noise", that is, the denominator of the signal-to-noise-ratio: According to
-    # eq. (8) in Mawet et al. (2014), this is given by the standard deviation of the integrated 
-    # flux in the noise apertures times a correction factor to account for the small sample 
+    # eq. (8) in Mawet et al. (2014), this is given by the standard deviation of the integrated
+    # flux in the noise apertures times a correction factor to account for the small sample
     # statistics.
     # NOTE: `ddof=1` is a necessary argument for np.std() in order to compute the *unbiased*
     #       estimate (i.e., including Bessel's corrections) of the standard deviation.
@@ -190,7 +198,7 @@ def false_alarm(image: np.ndarray,
     # FPF is given by 1 - F_nu(SNR), where F_nu is the cumulative distribution function (CDF) of a
     # t-distribution with `nu = n-1` degrees of freedom (see Section 3 of Mawet et al. (2014) for
     # more details on the Student's t distribution).
-    # For numerical reasons, we use the survival function (SF), which is defined precisely as 
+    # For numerical reasons, we use the survival function (SF), which is defined precisely as
     # 1-CDF, but may give more accurate results according to the scipy documentation.
     fpf = t.sf(snr, df=(num_ap - 2))
 

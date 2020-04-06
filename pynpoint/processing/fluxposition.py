@@ -578,37 +578,36 @@ class FalsePositiveModule(ProcessingModule):
 
         super(FalsePositiveModule, self).__init__(name_in)
 
-        if aperture_angles is None:
-            aperture_angles = np.array(((0., 360.),))
+        # Todo documentation
+        if aperture_angles is not None:
+            aperture_angles = np.atleast_2d(aperture_angles)
+            if np.transpose(aperture_angles).shape[0] != 2:
+                raise ValueError('The \'aperture_angles\' array must be a Nx2 numpy array')
 
-        aperture_angles = np.atleast_2d(aperture_angles)
-        if np.transpose(aperture_angles).shape[0] != 2:
-            raise ValueError('The \'aperture_angles\' array must be a Nx2 numpy array')
+            # If there is more than one angle interval specified, check the intervals for overlap
+            # and concatenate them
+            if aperture_angles.size > 2:
 
-        # If there is more than one angle interval specified, check the intervals for overlap and
-        # concatenate them
-        if aperture_angles.size > 2:
+                # The concatenation respects the cyclic nature of the intervals
+                aperture_angles = aperture_angles[aperture_angles[:, 0].argsort()]
+                a_con = np.atleast_2d(aperture_angles[0, :])
 
-            # The concatenation respects the cyclic nature of the intervals
-            aperture_angles = aperture_angles[aperture_angles[:, 0].argsort()]
-            a_con = np.atleast_2d(aperture_angles[0, :])
+                for temp in aperture_angles:
 
-            for temp in aperture_angles:
+                    if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
+                        a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
+                                                           (temp[1] - a_con[-1, 0]) % 360.)) % 360.
 
-                if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
-                    a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
-                                                       (temp[1] - a_con[-1, 0]) % 360.)) % 360.
+                    else:
+                        a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
 
-                else:
-                    a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
+                # If there is a final interval wrapping over 0 deg, the concatenation performed
+                if (a_con[0, 0] <= a_con[-1, 1]) and (a_con[-1, 1] < a_con[-1, 0]):
+                    a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
+                    a_con = np.delete(a_con, 0, axis=0)
 
-            # If there is a final interval wrapping over 0 deg, the concatenation performed
-            if (a_con[0, 0] <= a_con[-1, 1]) and (a_con[-1, 1] < a_con[-1, 0]):
-                a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
-                a_con = np.delete(a_con, 0, axis=0)
-
-        else:
-            a_con = aperture_angles
+                # Give the concatenated intervals as the aperture angle intervals
+                aperture_angles = a_con
 
         self.m_image_in_port = self.add_input_port(image_in_tag)
         self.m_snr_out_port = self.add_output_port(snr_out_tag)
@@ -617,13 +616,10 @@ class FalsePositiveModule(ProcessingModule):
             self.m_reference_in_port = None
         else:
             self.m_reference_in_port = self.add_input_port(reference_in_tag)
-            if self.m_reference_in_port.get_shape() != self.m_image_in_port.get_shape():
-                raise ValueError('The number and dimension of reference and image frames must be '
-                                 'equal')
 
         self.m_position = position
         self.m_aperture = aperture
-        self.m_aperture_angles = a_con
+        self.m_aperture_angles = aperture_angles
         self.m_ignore = ignore
         self.m_optimize = optimize
 
@@ -660,14 +656,23 @@ class FalsePositiveModule(ProcessingModule):
             # Calculate snr at the specified position
             if self.m_offset is None or snr is None:
                 _, _, snr, _ = false_alarm(image=image,
-                                           reference=reference,
                                            x_pos=pos_x,
                                            y_pos=pos_y,
-                                           aperture_angles=self.m_aperture_angles,
                                            size=self.m_aperture,
-                                           ignore=self.m_ignore)
+                                           ignore=self.m_ignore,
+                                           reference=reference,
+                                           aperture_angles=self.m_aperture_angles)
 
             return -snr
+
+        # Check whether reference intervals are specified
+        use_reference = self.m_reference_in_port is not None
+
+        # Dimensions of the image and reference cubes must be the same
+        if use_reference \
+                and (self.m_reference_in_port.get_shape() != self.m_image_in_port.get_shape()):
+            raise ValueError('The number and dimension of reference and image frames must be '
+                             'equal')
 
         # Calculate the size of the apertures in pixels
         pixscale = self.m_image_in_port.get_attribute('PIXSCALE')
@@ -678,9 +683,6 @@ class FalsePositiveModule(ProcessingModule):
 
         start_time = time.time()
 
-        # Check whether reference intervals are specified
-        use_reference = self.m_reference_in_port is not None
-
         for j in range(nimages):
             progress(j, nimages, 'Calculating S/N and FPF...', start_time)
 
@@ -690,9 +692,8 @@ class FalsePositiveModule(ProcessingModule):
             # If needed, load the j-th slice of the reference cube
             if use_reference:
                 reference = self.m_reference_in_port[j, ]
-
             else:
-                reference = image
+                reference = None
 
             center = center_subpixel(image)
 
@@ -707,12 +708,12 @@ class FalsePositiveModule(ProcessingModule):
 
                 # Calculate the SNR and FPF for the optimal position
                 _, _, snr, fpf = false_alarm(image=image,
-                                             reference=reference,
                                              x_pos=result.x[0],
                                              y_pos=result.x[1],
-                                             aperture_angles=self.m_aperture_angles,
                                              size=self.m_aperture,
-                                             ignore=self.m_ignore)
+                                             ignore=self.m_ignore,
+                                             reference=reference,
+                                             aperture_angles=self.m_aperture_angles)
 
                 x_pos, y_pos = result.x[0], result.x[1]
 
@@ -720,12 +721,12 @@ class FalsePositiveModule(ProcessingModule):
 
                 # Calculate the SNR and FPF for the specified position
                 _, _, snr, fpf = false_alarm(image=image,
-                                             reference=reference,
                                              x_pos=self.m_position[0],
                                              y_pos=self.m_position[1],
-                                             aperture_angles=self.m_aperture_angles,
                                              size=self.m_aperture,
-                                             ignore=self.m_ignore)
+                                             ignore=self.m_ignore,
+                                             reference=reference,
+                                             aperture_angles=self.m_aperture_angles)
 
                 x_pos, y_pos = self.m_position[0], self.m_position[1]
 
