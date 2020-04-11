@@ -585,7 +585,7 @@ class FalsePositiveModule(ProcessingModule):
 
         super(FalsePositiveModule, self).__init__(name_in)
 
-        # Todo documentation
+        # Convert to numpy arrays and check dimension
         if aperture_angles is not None:
             aperture_angles = np.atleast_2d(aperture_angles)
             if np.transpose(aperture_angles).shape[0] != 2:
