@@ -26,7 +26,6 @@ def false_alarm(image: np.ndarray,
                 y_pos: float,
                 size: float,
                 ignore: bool,
-                reference: np.ndarray = None,
                 aperture_angles: np.ndarray = None) -> Tuple[float, float, float, float]:
     """
     Compute the signal-to-noise ratio (SNR), which is formally defined as the test statistic of a
@@ -59,9 +58,6 @@ def false_alarm(image: np.ndarray,
         is desirable in case there are "self-subtraction wings" left and right of the planet which
         would bias the estimation of the noise level at the separation of the planet if not
         ignored.
-    reference : numpy.ndarray
-        The reference image as a 2D numpy array. If `None` is given, the reference apertures are
-        placed in the `image` input
     aperture_angles : numpy.ndarray
         The angle intervals in which the reference apertures are allowed. The angles are measured
         from the positive y-axis in a clockwise manner. Input must have dimension Nx2 and
@@ -82,9 +78,8 @@ def false_alarm(image: np.ndarray,
     fpf :
         The false positive fraction (FPF) as defined by Mawet et al. (2014) in eq. (10).
     """
-    # Check if reference frames and aperture angles should be used
+    # Check if aperture angles should be used
     use_angles = aperture_angles is not None
-    use_reference = reference is not None
 
     # If no aperture angles are defined, set them to the whole arc for the following calculation
     if aperture_angles is None:
@@ -145,13 +140,9 @@ def false_alarm(image: np.ndarray,
         y_tmp = center[0] + (x_pos - center[1]) * math.sin(theta) + \
                             (y_pos - center[0]) * math.cos(theta)
 
-        # Place a circular aperture at this position and sum up the flux inside the aperture.
-        # Depending on the test above, use reference or image frames
+        # Place a circular aperture at this position and sum up the flux inside the aperture
         aperture = CircularAperture((x_tmp, y_tmp), size)
-        if use_reference:
-            phot_table = aperture_photometry(reference, aperture, method='exact')
-        else:
-            phot_table = aperture_photometry(image, aperture, method='exact')
+        phot_table = aperture_photometry(image, aperture, method='exact')
         ap_phot[i+1] = phot_table['aperture_sum']
 
         # If not the full frame can be used for reference apertures, find the indices of the

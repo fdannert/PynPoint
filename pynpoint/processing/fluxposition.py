@@ -516,7 +516,6 @@ class FalsePositiveModule(ProcessingModule):
                  position: Tuple[float, float],
                  aperture_angles: Union[List, np.ndarray] = None,
                  aperture: float = 0.1,
-                 reference_in_tag: str = None,
                  ignore: bool = False,
                  optimize: bool = False,
                  **kwargs: Any) -> None:
@@ -544,10 +543,6 @@ class FalsePositiveModule(ProcessingModule):
             manner.
         aperture : float
             Aperture radius (arcsec).
-        reference_in_tag : str
-            Tag of database entry to be used as reference frames for the noise calculation. The
-            signal is still taken from the `image_in_tag` images. Database must have same dimension
-            as `image_in_tag`.
         ignore : bool
             Ignore the two neighboring apertures that may contain self-subtraction from the planet.
         optimize : bool
@@ -591,38 +586,8 @@ class FalsePositiveModule(ProcessingModule):
             if np.transpose(aperture_angles).shape[0] != 2:
                 raise ValueError('The \'aperture_angles\' array must be a Nx2 numpy array')
 
-            # If there is more than one angle interval specified, check the intervals for overlap
-            # and concatenate them
-            if aperture_angles.size > 2:
-
-                # The concatenation respects the cyclic nature of the intervals
-                aperture_angles = aperture_angles[aperture_angles[:, 0].argsort()]
-                a_con = np.atleast_2d(aperture_angles[0, :])
-
-                for temp in aperture_angles:
-
-                    if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
-                        a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
-                                                           (temp[1] - a_con[-1, 0]) % 360.)) % 360.
-
-                    else:
-                        a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
-
-                # If there is a final interval wrapping over 0 deg, the concatenation performed
-                if (a_con[0, 0] <= a_con[-1, 1]) and (a_con[-1, 1] < a_con[-1, 0]):
-                    a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
-                    a_con = np.delete(a_con, 0, axis=0)
-
-                # Give the concatenated intervals as the aperture angle intervals
-                aperture_angles = a_con
-
         self.m_image_in_port = self.add_input_port(image_in_tag)
         self.m_snr_out_port = self.add_output_port(snr_out_tag)
-
-        if reference_in_tag is None:
-            self.m_reference_in_port = None
-        else:
-            self.m_reference_in_port = self.add_input_port(reference_in_tag)
 
         self.m_position = position
         self.m_aperture = aperture
@@ -669,19 +634,34 @@ class FalsePositiveModule(ProcessingModule):
                                            y_pos=pos_y,
                                            size=self.m_aperture,
                                            ignore=self.m_ignore,
-                                           reference=reference,
                                            aperture_angles=self.m_aperture_angles)
 
             return -snr
 
-        # Check whether reference intervals are specified
-        use_reference = self.m_reference_in_port is not None
+        # If there is more than one angle interval specified, check the intervals for overlap and
+        # concatenate them
+        if (self.m_aperture_angles is not None) and (self.m_aperture_angles.size > 2):
 
-        # Dimensions of the image and reference cubes must be the same
-        if use_reference \
-                and (self.m_reference_in_port.get_shape() != self.m_image_in_port.get_shape()):
-            raise ValueError('The number and dimension of reference and image frames must be '
-                             'equal')
+            # The concatenation respects the cyclic nature of the intervals
+            aperture_angles = self.m_aperture_angles[self.m_aperture_angles[:, 0].argsort()]
+            a_con = np.atleast_2d(aperture_angles[0, :])
+
+            for temp in aperture_angles:
+
+                if ((temp[0] - a_con[-1, 0]) % 360.) <= ((a_con[-1, 1] - a_con[-1, 0]) % 360.):
+                    a_con[-1, 1] = (a_con[-1, 0] + max((a_con[-1, 1] - a_con[-1, 0]) % 360.,
+                                                       (temp[1] - a_con[-1, 0]) % 360.)) % 360.
+
+                else:
+                    a_con = np.append(a_con, np.atleast_2d(temp), axis=0)
+
+            # If there is a final interval wrapping over 0 deg, the concatenation performed
+            if (a_con[0, 0] <= a_con[-1, 1]) and (a_con[-1, 1] < a_con[-1, 0]):
+                a_con[-1, 1] = max(a_con[-1, 1], a_con[0, 1])
+                a_con = np.delete(a_con, 0, axis=0)
+
+            # Give the concatenated intervals as the aperture angle intervals
+            self.m_aperture_angles = a_con
 
         # Calculate the size of the apertures in pixels
         pixscale = self.m_image_in_port.get_attribute('PIXSCALE')
@@ -697,12 +677,6 @@ class FalsePositiveModule(ProcessingModule):
 
             # Load the j-th slice of the image cube
             image = self.m_image_in_port[j, ]
-
-            # If needed, load the j-th slice of the reference cube
-            if use_reference:
-                reference = self.m_reference_in_port[j, ]
-            else:
-                reference = None
 
             center = center_subpixel(image)
 
@@ -721,7 +695,6 @@ class FalsePositiveModule(ProcessingModule):
                                              y_pos=result.x[1],
                                              size=self.m_aperture,
                                              ignore=self.m_ignore,
-                                             reference=reference,
                                              aperture_angles=self.m_aperture_angles)
 
                 x_pos, y_pos = result.x[0], result.x[1]
@@ -734,7 +707,6 @@ class FalsePositiveModule(ProcessingModule):
                                              y_pos=self.m_position[1],
                                              size=self.m_aperture,
                                              ignore=self.m_ignore,
-                                             reference=reference,
                                              aperture_angles=self.m_aperture_angles)
 
                 x_pos, y_pos = self.m_position[0], self.m_position[1]

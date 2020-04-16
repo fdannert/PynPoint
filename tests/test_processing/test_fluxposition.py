@@ -264,37 +264,6 @@ class TestFluxPosition:
         assert np.allclose(data[0, 4], 6.957325916268468, rtol=limit, atol=0.)
         assert np.allclose(data[0, 5], 3.315251095658436e-05, rtol=limit, atol=0.)
 
-    def test_false_positive_reference(self):
-        module = PcaPsfSubtractionModule(pca_numbers=[2, ],
-                                         name_in='pca2',
-                                         images_in_tag='read',
-                                         reference_in_tag='read',
-                                         res_mean_tag='res_mean2',
-                                         extra_rot=0.)
-
-        self.pipeline.add_module(module)
-        self.pipeline.run_module('pca2')
-
-        module = FalsePositiveModule(position=(31., 49.),
-                                     aperture=0.1,
-                                     reference_in_tag='res_mean2',
-                                     ignore=True,
-                                     name_in='false4',
-                                     image_in_tag='res_mean1',
-                                     snr_out_tag='snr_fpf4',
-                                     optimize=False)
-
-        self.pipeline.add_module(module)
-        self.pipeline.run_module('false4')
-
-        data = self.pipeline.get_data('snr_fpf4')
-        assert np.allclose(data[0, 0], 31.0, rtol=limit, atol=0.)
-        assert np.allclose(data[0, 1], 49.0, rtol=limit, atol=0.)
-        assert np.allclose(data[0, 2], 0.513710034941892, rtol=limit, atol=0.)
-        assert np.allclose(data[0, 3], 93.01278750418334, rtol=limit, atol=0.)
-        assert np.allclose(data[0, 4], 5.732604258876715, rtol=limit, atol=0.)
-        assert np.allclose(data[0, 5], 4.708593182147344e-05, rtol=limit, atol=0.)
-
     def test_simplex_minimization_hessian(self) -> None:
 
         module = SimplexMinimizationModule(name_in='simplex1',
