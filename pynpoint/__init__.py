@@ -61,7 +61,8 @@ from pynpoint.processing.psfpreparation import PSFpreparationModule, \
                                                SDIpreparationModule
 
 from pynpoint.processing.psfsubtraction import PcaPsfSubtractionModule, \
-                                               ClassicalADIModule
+                                               ClassicalADIModule, \
+                                               IterativePcaModule
 
 from pynpoint.processing.resizing import CropImagesModule, \
                                          ScaleImagesModule, \

@@ -18,7 +18,7 @@ from typeguard import typechecked
 from pynpoint.core.processing import ProcessingModule
 from pynpoint.util.module import progress
 from pynpoint.util.multipca import PcaMultiprocessingCapsule
-from pynpoint.util.psf import pca_psf_subtraction
+from pynpoint.util.psf import pca_psf_subtraction, ipca_iteration
 from pynpoint.util.residuals import combine_residuals
 
 
@@ -515,3 +515,76 @@ class ClassicalADIModule(ProcessingModule):
         self.m_stack_out_port.add_history('ClassicalADIModule', history)
 
         self.m_res_out_port.close_port()
+
+
+class IterativePcaModule(ProcessingModule):
+    """
+    Description TODO
+    """
+
+    __author__ = 'Felix Dannert, Phillip Huber, Markus Bonse' #  TODO
+
+    def __init__(self,
+                 name_in: str,
+                 images_in_tag: str,
+                 pca_number: int,
+                 iterations: int,
+                 pca_increasing: bool=False,
+                 res_mean_tag: Optional[str]=None,
+                 extra_rot: float = 0.) -> None:
+        """
+        TODO
+        """
+
+        super(IterativePcaModule, self).__init__(name_in)
+
+        self.m_components = pca_number
+        self.m_iterations = iterations
+        self.m_ipca_switch = pca_increasing
+        self.m_extra_rot = extra_rot
+
+        self.m_star_in_port = self.add_input_port(images_in_tag)
+
+        if res_mean_tag is None:
+            self.m_res_mean_out_port = None
+        else:
+            self.m_res_mean_out_port = self.add_output_port(res_mean_tag)
+
+    def _run_single_processing(self,
+                               input_cube: np.ndarray,
+                               initial_model: np.ndarray) -> None:
+        """
+        TODO
+        """
+
+        start_time = time.time()
+
+        residual = initial_model
+        n_components = self.m_components
+
+        for i in range (self.m_iterations):
+            progress(i, self.m_iterations, 'Iterating...', start_time)
+            parang = -1.*self.m_star_in_port.get_attribute('PARANG') + self.m_extra_rot
+            residual = ipca_iteration(input_cube=input_cube,
+                                      last_residual_positive_part=residual,
+                                      parang=parang,
+                                      n_components=n_components)
+
+            if self.m_res_mean_out_port is not None:
+                self.m_res_mean_out_port.append(residual, data_dim=3)
+
+            residual[residual < 0] = 0
+
+    def run(self) -> None:
+        """
+        TODO
+        """
+
+        star_data = self.m_star_in_port.get_all()
+
+        initial_model = np.zeros_like(star_data[0, ])
+
+        self._run_single_processing(input_cube=star_data,
+                                    initial_model=initial_model)
+
+        self.m_star_in_port.close_port()

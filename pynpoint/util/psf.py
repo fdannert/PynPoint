@@ -100,3 +100,39 @@ def pca_psf_subtraction(images: np.ndarray,
         res_rot[j, ] = rotate(residuals[j, ], item, reshape=False)
 
     return residuals, res_rot
+
+
+def ipca_iteration(input_cube: np.ndarray,
+                   last_residual_positive_part: np.ndarray,
+                   parang: np.ndarray,
+                   n_components: int) -> np.ndarray:
+    signal_cube = np.array([last_residual_positive_part for i in range(input_cube.shape[0])])
+
+    rotated_signal_cube = np.zeros_like(signal_cube)
+    for i, ang in enumerate(parang):
+        rotated_signal_cube[i, ] = rotate(input=np.nan_to_num(signal_cube[i, ]),
+                                          angle=-ang,
+                                          reshape=False,
+                                          order=5)
+
+    signal_less_cube = input_cube - rotated_signal_cube
+
+    pca_sklearn = PCA(n_components=n_components, svd_solver='arpack')
+    pca_sklearn.fit(signal_less_cube.reshape(signal_less_cube.shape[0], -1))
+    noise_model = pca_sklearn.inverse_transform(
+        pca_sklearn.transform(
+            signal_less_cube.reshape(
+                signal_less_cube.shape[0], -1))).reshape(*signal_less_cube.shape)
+
+    residual = input_cube - noise_model
+
+    derotated_residual = np.zeros_like(residual)
+    for i, ang in enumerate(parang):
+        derotated_residual[i, ] = rotate(input=np.nan_to_num(residual[i, ]),
+                                         angle=ang,
+                                         reshape=False,
+                                         order=5)
+
+    residual_frame = np.mean(derotated_residual, axis=0)
+
+    return residual_frame
