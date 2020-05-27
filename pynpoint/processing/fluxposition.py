@@ -19,7 +19,7 @@ from photutils import aperture_photometry, CircularAperture
 from photutils.aperture import Aperture
 
 from pynpoint.core.processing import ProcessingModule
-from pynpoint.util.analysis import fake_planet, merit_function, false_alarm, gaussian_noise
+from pynpoint.util.analysis import fake_planet, merit_function, false_alarm, pixel_variance
 from pynpoint.util.image import create_mask, polar_to_cartesian, cartesian_to_polar, \
                                 center_subpixel, rotate_coordinates
 from pynpoint.util.mcmc import lnprob
@@ -158,8 +158,9 @@ class FakePlanetModule(ProcessingModule):
 
 class SimplexMinimizationModule(ProcessingModule):
     """
-    Pipeline module to measure the flux and position of a planet by injecting negative fake planets
-    and minimizing a figure of merit.
+    Pipeline module to retrieve the contrast and position of a planet by injecting negative
+    artificial planets and using a downhill simplex method. The module supports both ADI and
+    RDI.
     """
 
     __author__ = 'Tomas Stolker'
@@ -200,47 +201,47 @@ class SimplexMinimizationModule(ProcessingModule):
             residuals are stored for each step of the minimization. The last image contains the
             best-fit residuals.
         flux_position_tag : str
-            Tag of the database entry with the flux and position results that are written as output.
-            Each step of the minimization stores the x position (pix), y position (pix), separation
-            (arcsec), angle (deg), contrast (mag), and the chi-square value. The last row contains
-            the best-fit results.
+            Tag of the database entry with the flux and position results that are written as
+            output. Each step of the minimization stores the x position (pixels), y position
+            (pixels), separation (arcsec), angle (deg), contrast (mag), and the chi-square value.
+            The last row contains the best-fit results.
         position : tuple(int, int)
-            Approximate position (x, y) of the planet (pix). This is also the location where the
-            figure of merit is calculated within an aperture of radius ``aperture``.
+            Approximate position (x, y) of the planet in pixels. This is also the location where
+            the figure of merit is calculated within an aperture of radius ``aperture``.
         magnitude : float
             Approximate magnitude of the planet relative to the star.
         psf_scaling : float
             Additional scaling factor of the planet flux (e.g., to correct for a neutral density
-            filter). Should be negative in order to inject negative fake planets.
+            filter). Should be a negative value in order to inject negative fake planets.
         merit : str
-            Figure of merit for the minimization. Can be 'hessian', to minimize the sum of the
-            absolute values of the determinant of the Hessian matrix, or 'poisson', to minimize the
-            sum of the absolute pixel values, assuming a Poisson distribution for the noise
-            (Wertz et al. 2017), or 'gaussian', to minimize the ratio of the squared pixel values
-            and the variance of the pixels within an annulus but excluding the aperture area.
+            Figure of merit for the minimization ('hessian', 'gaussian', or 'poisson'). Either the
+            determinant of the Hessian matrix is minimized ('hessian') or the flux of each pixel
+            ('gaussian' or 'poisson'). For the latter case, the estimated noise is assumed to
+            follow a Poisson (see Wertz et al. 2017) or Gaussian distribution (see Stolker et al.
+            2020).
         aperture : float
-            Aperture radius (arcsec) at the position specified at *position*.
+            Aperture radius (arcsec) at the position specified at ``position``.
         sigma : float
-            Standard deviation (arcsec) of the Gaussian kernel which is used to smooth the images
+            Standard deviation (arcsec) of the Gaussian kernel that is used to smooth the images
             before the figure of merit is calculated (in order to reduce small pixel-to-pixel
             variations).
         tolerance : float
-            Absolute error on the input parameters, position (pix) and contrast (mag), that is used
-            as acceptance level for convergence. Note that only a single value can be specified
-            which is used for both the position and flux so tolerance=0.1 will give a precision of
-            0.1 mag and 0.1 pix. The tolerance on the output (i.e., the chi-square value) is set to
-            np.inf so the condition is always met.
+            Absolute error on the input parameters, position (pixels) and contrast (mag), that is
+            used as acceptance level for convergence. Note that only a single value can be
+            specified which is used for both the position and flux so ``tolerance=0.1`` corresponds
+            to a precision of 0.1 mag and 0.1 pix. The tolerance on the output (i.e., the
+            chi-square value) is set to ``np.inf`` such that the condition is always met.
         pca_number : int, range, list(int, )
             Number of principal components (PCs) used for the PSF subtraction. Can be either a
-            single value or a range/list of values. In the latter case, the `res_out_tag` and
-            `flux_position_tag` contain a 3 digit number with the number of PCs.
-        cent_size : float
-            Radius of the central mask (arcsec). No mask is used when set to None. Masking is done
-            after the artificial planet is injected.
-        edge_size : float
+            single value, or a range or list of values. In the latter case, the ``res_out_tag`` and
+            ```flux_position_tag``` contain a 3 digit number with the number of PCs.
+        cent_size : float, None
+            Radius of the central mask (arcsec). No mask is used when set to ``None``. The mask is
+            applied after the artificial planet is injected.
+        edge_size : float, None
             Outer radius (arcsec) beyond which pixels are masked. No outer mask is used when set to
-            None. The radius will be set to half the image size if the argument is larger than half
-            the image size. Masking is done after the artificial planet is injected.
+            ``None``. The radius will be set to half the image size if the argument is larger than
+            half the image size. The mask is applied after the artificial planet is injected.
         extra_rot : float
             Additional rotation angle of the images in clockwise direction (deg).
         residuals : str
@@ -248,12 +249,12 @@ class SimplexMinimizationModule(ProcessingModule):
         reference_in_tag : str, None
             Tag of the database entry with the reference images that are read as input. The data of
             the ``image_in_tag`` itself is used as reference data for the PSF subtraction if set to
-            None. Note that the mean is not subtracted from the data of ``image_in_tag`` and
+            ``None``. Note that the mean is not subtracted from the data of ``image_in_tag`` and
             ``reference_in_tag`` in case the ``reference_in_tag`` is used, to allow for flux and
             position measurements in the context of RDI.
         offset : float, None
-            Offset (pix) by which the injected negative PSF may deviate from ``position``. No
-            constraint on the position is applied if set to None.
+            Offset (pixels) by which the injected negative PSF may deviate from ``position``. The
+            constraint on the position is not applied if set to ``None``.
 
         Returns
         -------
@@ -309,8 +310,8 @@ class SimplexMinimizationModule(ProcessingModule):
     def run(self) -> None:
         """
         Run method of the module. The position and contrast of a planet is measured by injecting
-        negative copies of the PSF template and applying a simplex method (Nelder-Mead) for
-        minimization of a figure of merit at the planet location.
+        negative copies of the PSF template and applying a downhill simplex method (Nelder-Mead)
+        for minimization of a figure of merit at the planet location.
 
         Returns
         -------
@@ -351,7 +352,7 @@ class SimplexMinimizationModule(ProcessingModule):
                        count: int,
                        n_components: int,
                        sklearn_pca: Optional[PCA],
-                       noise: Optional[float]) -> float:
+                       var_noise: Optional[float]) -> float:
 
             pos_y = arg[0]
             pos_x = arg[1]
@@ -406,7 +407,7 @@ class SimplexMinimizationModule(ProcessingModule):
                                         merit=self.m_merit,
                                         aperture=aperture,
                                         sigma=self.m_sigma,
-                                        noise=noise)
+                                        var_noise=var_noise)
 
             position = rotate_coordinates(center, (pos_y, pos_x), -self.m_extra_rot)
 
@@ -464,21 +465,23 @@ class SimplexMinimizationModule(ProcessingModule):
 
                 sklearn_pca.components_ = q_ortho.T
 
-            if self.m_merit in ('poisson', 'hessian'):
-                noise = None
+            if self.m_merit == 'poisson':
+                var_noise = None
 
-            elif self.m_merit == 'gaussian':
-                noise = gaussian_noise(images=images,
-                                       parang=parang,
-                                       cent_size=self.m_cent_size,
-                                       edge_size=self.m_edge_size,
-                                       pca_number=n_components,
-                                       residuals=self.m_residuals,
-                                       aperture=aperture)
+            elif self.m_merit in ['gaussian', 'hessian']:
+                var_noise = pixel_variance(var_type=self.m_merit,
+                                           images=images,
+                                           parang=parang,
+                                           cent_size=self.m_cent_size,
+                                           edge_size=self.m_edge_size,
+                                           pca_number=n_components,
+                                           residuals=self.m_residuals,
+                                           aperture=aperture,
+                                           sigma=self.m_sigma)
 
             minimize(fun=_objective,
                      x0=np.array([pos_init[0], pos_init[1], self.m_magnitude]),
-                     args=(i, n_components, sklearn_pca, noise),
+                     args=(i, n_components, sklearn_pca, var_noise),
                      method='Nelder-Mead',
                      tol=None,
                      options={'xatol': self.m_tolerance, 'fatol': float('inf')})
@@ -620,7 +623,7 @@ class FalsePositiveModule(ProcessingModule):
                                            size=self.m_aperture,
                                            ignore=self.m_ignore)
 
-            return -snr
+            return -1.*snr
 
         pixscale = self.m_image_in_port.get_attribute('PIXSCALE')
         self.m_aperture /= pixscale
@@ -673,8 +676,8 @@ class FalsePositiveModule(ProcessingModule):
 class MCMCsamplingModule(ProcessingModule):
     """
     Pipeline module to measure the separation, position angle, and contrast of a planet with
-    injection of negative artificial planets and sampling of the posterior distributions with
-    emcee, an affine invariant Markov chain Monte Carlo (MCMC) ensemble sampler.
+    injection of negative artificial planets and sampling of the posterior distribution with
+    ``emcee``, an affine invariant Markov chain Monte Carlo (MCMC) ensemble sampler.
     """
 
     __author__ = 'Tomas Stolker'
@@ -704,30 +707,32 @@ class MCMCsamplingModule(ProcessingModule):
         name_in : str
             Unique name of the module instance.
         image_in_tag : str
-            Tag of the database entry with images that are read as input.
+            Database tag with the science images.
         psf_in_tag : str
-            Tag of the database entry with the reference PSF that is used as fake planet. Can be
-            either a single image (2D) or a cube (3D) with the dimensions equal to *image_in_tag*.
+            Database tag with the reference PSF that is used as artificial planet. The dataset can
+            be either a single image, or a stack of images with the dimensions equal to
+            ``image_in_tag``.
         chain_out_tag : str
-            Tag of the database entry with the Markov chain that is written as output. The shape
-            of the array is (nsteps, nwalkers, 3). The mean acceptance fraction and the integrated
-            autocorrelation time are stored as attributes to this dataset.
+            Database tag were the posterior samples will be stored. The shape of the array is
+            ``(nsteps, nwalkers, 3)``. The mean acceptance fraction and the integrated
+            autocorrelation time are stored as attributes.
         param : tuple(float, float, float)
             The approximate separation (arcsec), angle (deg), and contrast (mag), for example
             obtained with the :class:`~pynpoint.processing.fluxposition.SimplexMinimizationModule`.
             The angle is measured in counterclockwise direction with respect to the upward
-            direction (i.e., East of North). The specified separation and angle are also used as
-            fixed position for the aperture if *aperture* contains a float value.
+            direction (i.e., East of North). The separation and angle are also used as (fixed)
+            position for the aperture if ``aperture`` contains a float (i.e. the radius).
         bounds : tuple(tuple(float, float), tuple(float, float), tuple(float, float))
-            The boundaries of the separation (arcsec), angle (deg), and contrast (mag). Each set
-            of boundaries is specified as a tuple.
+            The prior boundaries for the separation (arcsec), angle (deg), and contrast (mag). Each
+            set of boundaries is specified as a tuple.
         nwalkers : int
-            Number of ensemble members.
+            Number of walkers.
         nsteps : int
-            Number of steps to run per walker.
+            Number of steps per walker.
         psf_scaling : float
-            Additional scaling factor of the planet flux (e.g., to correct for a neutral density
-            filter). Should be negative in order to inject negative fake planets.
+            Additional scaling factor of the planet flux (e.g. to correct for a neutral density
+            filter or difference in exposure time). The value should be negative in order to inject
+            negative fake planets.
         pca_number : int
             Number of principal components used for the PSF subtraction.
         aperture : float, tuple(int, int, float)
@@ -741,12 +746,11 @@ class MCMCsamplingModule(ProcessingModule):
         extra_rot : float
             Additional rotation angle of the images (deg).
         merit : str
-            Figure of merit that is used for the likelihood function ('gaussian' or 'poisson').
-            Pixels are assumed to be independent measurements which are expected to be equal to
-            zero in case the best-fit negative PSF template is injected. With 'gaussian', the
-            variance is estimated from the pixel values within an annulus at the separation of
-            the aperture (but excluding the pixels within the aperture). With 'poisson', a Poisson
-            distribution is assumed for the variance of each pixel value (see Wertz et al. 2017).
+            Figure of merit for the minimization ('hessian', 'gaussian', or 'poisson'). Either the
+            determinant of the Hessian matrix is minimized ('hessian') or the flux of each pixel
+            ('gaussian' or 'poisson'). For the latter case, the estimate noise is assumed to follow
+            a Poisson (see Wertz et al. 2017) or Gaussian distribution (see Wertz et al. 2017 and
+            Stolker et al. 2020).
         residuals : str
             Method used for combining the residuals ('mean', 'median', 'weighted', or 'clipped').
 
@@ -763,13 +767,6 @@ class MCMCsamplingModule(ProcessingModule):
         NoneType
             None
         """
-
-        if 'prior' in kwargs:
-            warnings.warn('The \'prior\' parameter has been deprecated.', DeprecationWarning)
-
-        if 'variance' in kwargs:
-            warnings.warn('The \'variance\' parameter has been deprecated. Please use the '
-                          '\'merit\' parameter instead.', DeprecationWarning)
 
         if 'sigma' in kwargs:
             self.m_sigma = kwargs['sigma']
@@ -854,17 +851,29 @@ class MCMCsamplingModule(ProcessingModule):
         elif isinstance(self.m_aperture, tuple):
             aperture = (self.m_aperture[1], self.m_aperture[0], self.m_aperture[2]/pixscale)
 
-        if self.m_merit == 'poisson':
-            noise = None
+        print(f'Number of principal components: {self.m_pca_number}')
+        print(f'Aperture position [x, y]: [{aperture[1]}, {aperture[0]}]')
+        print(f'Aperture radius (pixels): {aperture[2]:.2f}')
+        print(f'Figure of merit: {self.m_merit}')
 
-        elif self.m_merit == 'gaussian':
-            noise = gaussian_noise(images=images,
-                                   parang=parang,
-                                   cent_size=self.m_mask[0],
-                                   edge_size=self.m_mask[1],
-                                   pca_number=self.m_pca_number,
-                                   residuals=self.m_residuals,
-                                   aperture=aperture)
+        if self.m_merit == 'poisson':
+            var_noise = None
+
+        elif self.m_merit in ['gaussian', 'hessian']:
+            var_noise = pixel_variance(var_type=self.m_merit,
+                                       images=images,
+                                       parang=parang,
+                                       cent_size=self.m_mask[0],
+                                       edge_size=self.m_mask[1],
+                                       pca_number=self.m_pca_number,
+                                       residuals=self.m_residuals,
+                                       aperture=aperture,
+                                       sigma=0.)
+
+            if self.m_merit == 'gaussian':
+                print(f'Gaussian standard deviation (counts): {np.sqrt(var_noise):.2e}')
+            elif self.m_merit == 'hessian':
+                print(f'Hessian standard deviation: {np.sqrt(var_noise):.2e}')
 
         initial = np.zeros((self.m_nwalkers, ndim))
 
@@ -892,7 +901,7 @@ class MCMCsamplingModule(ProcessingModule):
                                                    indices,
                                                    self.m_merit,
                                                    self.m_residuals,
-                                                   noise]))
+                                                   var_noise]))
 
             sampler.run_mcmc(initial, self.m_nsteps, progress=True)
 
@@ -913,15 +922,15 @@ class MCMCsamplingModule(ProcessingModule):
 
         print('Median and uncertainties (20% removed as burnin):')
 
-        print(f'Separation [mas] = {1e3*sep_percen[1]:.2f} '
+        print(f'Separation (mas) = {1e3*sep_percen[1]:.2f} '
               f'(-{1e3*sep_percen[1]-1e3*sep_percen[0]:.2f} '
               f'+{1e3*sep_percen[2]-1e3*sep_percen[1]:.2f})')
 
-        print(f'Position angle [deg] = {ang_percen[1]:.2f} '
+        print(f'Position angle (deg) = {ang_percen[1]:.2f} '
               f'(-{ang_percen[1]-ang_percen[0]:.2f} '
               f'+{ang_percen[2]-ang_percen[1]:.2f})')
 
-        print(f'Contrast [mag] = {mag_percen[1]:.2f} '
+        print(f'Contrast (mag) = {mag_percen[1]:.2f} '
               f'(-{mag_percen[1]-mag_percen[0]:.2f} '
               f'+{mag_percen[2]-mag_percen[1]:.2f})')
 
@@ -935,7 +944,7 @@ class MCMCsamplingModule(ProcessingModule):
 
         try:
             autocorr = emcee.autocorr.integrated_time(sampler.get_chain())
-            print(f'Integrated autocorrelation time ={autocorr}')
+            print(f'Integrated autocorrelation time = {autocorr}')
 
         except emcee.autocorr.AutocorrError:
             autocorr = [np.nan, np.nan, np.nan]
@@ -1019,10 +1028,17 @@ class AperturePhotometryModule(ProcessingModule):
         self.m_radius /= pixscale
 
         if self.m_position is None:
+            # Returns the center position as (y, x)
             self.m_position = center_subpixel(self.m_image_in_port[0, ])
 
+            # Store the center position as (x, y)
+            self.m_position = (self.m_position[1], self.m_position[0])
+
+        print(f'Aperture position (x, y) = ({self.m_position[0]:.1f}, {self.m_position[1]:.1f})')
+        print(f'Aperture radius (pixels) = ({self.m_radius:.1f})')
+
         # Position in CircularAperture is defined as (x, y)
-        aperture = CircularAperture((self.m_position[1], self.m_position[0]), self.m_radius)
+        aperture = CircularAperture((self.m_position[0], self.m_position[1]), self.m_radius)
 
         self.apply_function_to_images(_photometry,
                                       self.m_image_in_port,
@@ -1089,12 +1105,11 @@ class SystematicErrorModule(ProcessingModule):
             Additional scaling factor of the planet flux (e.g., to correct for a neutral density
             filter). Should be a positive value.
         merit : str
-            Figure of merit that is used for the likelihood function ('gaussian' or 'poisson').
-            Pixels are assumed to be independent measurements which are expected to be equal to
-            zero in case the best-fit negative PSF template is injected. With 'gaussian', the
-            variance is estimated from the pixel values within an annulus at the separation of
-            the aperture (but excluding the pixels within the aperture). With 'poisson', a Poisson
-            distribution is assumed for the variance of each pixel value (see Wertz et al. 2017).
+            Figure of merit for the minimization ('hessian', 'gaussian', or 'poisson'). Either the
+            determinant of the Hessian matrix is minimized ('hessian') or the flux of each pixel
+            ('gaussian' or 'poisson'). For the latter case, the estimate noise is assumed to follow
+            a Poisson (see Wertz et al. 2017) or Gaussian distribution (see Wertz et al. 2017 and
+            Stolker et al. 2020).
         aperture : float
             Aperture radius (arcsec) that is used for measuring the figure of merit.
         tolerance : float
