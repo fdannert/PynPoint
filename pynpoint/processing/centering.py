@@ -170,6 +170,7 @@ class FitCenterModule(ProcessingModule):
                  filter_size: Optional[float] = None,
                  **kwargs: Union[Tuple[float, float, float, float, float, float, float],
                                  Tuple[float, float, float, float, float, float, float, float],
+                                 np.ndarray,
                                  float]) -> None:
         """
         Parameters
@@ -218,10 +219,13 @@ class FitCenterModule(ProcessingModule):
         Keyword arguments
         -----------------
         guess : tuple(float, float, float, float, float, float, float, float),
-                tuple(float, float, float, float, float, float, float, float, float)
+                tuple(float, float, float, float, float, float, float, float, float),
+                np.ndarray
             The initial parameter values for the least squares fit: x offset with respect to center
             (pix), y offset with respect to center (pix), FWHM x (pix), FWHM y (pix), amplitude
-            (ADU), angle (deg), offset (ADU), and power index (only for Moffat function).
+            (ADU), angle (deg), offset (ADU), and power index (only for Moffat function). If the
+            guess differs between the image, it can be given as an array of guesses in the same
+            format as described above.
 
         Returns
         -------

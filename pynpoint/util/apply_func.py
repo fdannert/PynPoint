@@ -142,7 +142,8 @@ def fit_2d_function(image: np.ndarray,
                     model: str,
                     filter_size: Optional[float],
                     guess: Union[Tuple[float, float, float, float, float, float, float],
-                                 Tuple[float, float, float, float, float, float, float, float]],
+                                 Tuple[float, float, float, float, float, float, float, float],
+                    np.ndarray],
                     mask_out_port: Optional[OutputPort],
                     xx_grid: np.ndarray,
                     yy_grid: np.ndarray,
@@ -280,6 +281,9 @@ def fit_2d_function(image: np.ndarray,
         moffat = offset + amp / (1.+a_term+b_term+c_term)**beta
 
         return moffat[(rr_ap > mask_radii[0]) & (rr_ap < mask_radii[1])]
+
+    if isinstance(guess, np.ndarray):
+        guess = guess[im_index]
 
     if filter_size:
         image = gaussian_filter(image, filter_size)
