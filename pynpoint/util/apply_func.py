@@ -29,7 +29,8 @@ from statsmodels.robust import mad
 from typeguard import typechecked
 
 from pynpoint.core.dataio import InputPort, OutputPort
-from pynpoint.util.image import center_pixel, crop_image, scale_image, shift_image
+from pynpoint.util.image import (center_pixel, crop_image, scale_image, shift_image,
+                                 subpixel_distance)
 from pynpoint.util.star import locate_star
 from pynpoint.util.wavelets import WaveletAnalysisCapsule
 
@@ -147,7 +148,7 @@ def fit_2d_function(image: np.ndarray,
                     mask_out_port: Optional[OutputPort],
                     xx_grid: np.ndarray,
                     yy_grid: np.ndarray,
-                    rr_ap: np.ndarray,
+                    rr_ap: Union[np.ndarray, None],
                     pixscale: float) -> np.ndarray:
 
     @typechecked
@@ -284,6 +285,9 @@ def fit_2d_function(image: np.ndarray,
 
     if isinstance(guess, np.ndarray):
         guess = guess[im_index]
+        rr_ap = subpixel_distance(image.shape,
+                                      position=(guess[1], guess[0]),
+                                      shift_center=False)
 
     if filter_size:
         image = gaussian_filter(image, filter_size)

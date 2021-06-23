@@ -306,9 +306,12 @@ class FitCenterModule(ProcessingModule):
 
         _, xx_grid, yy_grid = pixel_distance(self.m_image_in_port.get_shape()[-2:], position=None)
 
-        rr_ap = subpixel_distance(self.m_image_in_port.get_shape()[-2:],
-                                  position=(self.m_guess[1], self.m_guess[0]),
-                                  shift_center=False)  # (y, x)
+        if isinstance(self.m_guess, np.ndarray):
+            rr_ap = None
+        else:
+            rr_ap = subpixel_distance(self.m_image_in_port.get_shape()[-2:],
+                                      position=(self.m_guess[1], self.m_guess[0]),
+                                      shift_center=False)  # (y, x)
 
         nimages = self.m_image_in_port.get_shape()[0]
         frames = memory_frames(memory, nimages)
