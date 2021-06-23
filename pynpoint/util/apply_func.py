@@ -284,7 +284,7 @@ def fit_2d_function(image: np.ndarray,
         return moffat[(rr_ap > mask_radii[0]) & (rr_ap < mask_radii[1])]
 
     if isinstance(guess, np.ndarray):
-        guess = guess[im_index]
+        guess = guess[im_index, ]
         rr_ap = subpixel_distance(image.shape,
                                       position=(guess[1], guess[0]),
                                       shift_center=False)
